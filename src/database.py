@@ -280,4 +280,3 @@ class Database:
         update_data = TaskUpdate(status=TaskStatus.DELETED)
         self.update_task(task_id, update_data)
         return True
-
