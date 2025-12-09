@@ -67,11 +67,6 @@ class ValidationError(BadRequestError):
     default_message = "Validation error"
 
 
-class DatabaseError(InternalServerError):
-    """Error for database operation failures (500)."""
-    default_message = "Database operation failed"
-
-
 def register_error_handlers(app: Flask) -> None:
     """
     Register error handlers with the Flask application.

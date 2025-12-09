@@ -43,9 +43,33 @@ class TaskUpdate(BaseModel):
 class Task(TaskBase):
     """Complete task model with all fields including timestamps."""
     id: str = Field(default_factory=lambda: str(uuid4()), description="Unique task identifier")
-    created_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Task creation timestamp")
-    updated_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Task creation timestamp")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp")
 
     class Config:
         from_attributes = True
+    
+    def to_db_dict(self) -> dict:
+        """Convert task to dictionary for database storage."""
+        return {
+            "id": self.id,
+            "title": self.title,
+            "due_date": self.due_date.isoformat() if self.due_date else None,
+            "status": self.status.value,
+            "comments": self.comments,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+    
+    def to_response_dict(self) -> dict:
+        """Convert task to dictionary for API response."""
+        return {
+            "id": self.id,
+            "title": self.title,
+            "due_date": self.due_date.isoformat() if self.due_date else None,
+            "status": self.status.value,
+            "comments": self.comments,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
 

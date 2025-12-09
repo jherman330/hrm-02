@@ -3,6 +3,7 @@ Main Flask application for the task management system.
 Provides RESTful API endpoints with SQLite database integration.
 """
 
+import atexit
 import logging
 import sys
 from datetime import datetime
@@ -10,7 +11,9 @@ from datetime import datetime
 from flask import Flask, request
 
 from config import Config, get_config
-from database import Database, DatabaseError, TaskNotFoundError
+from database import init_db, close_db, TaskRepository
+from database.database import DatabaseError
+from database.task_repository import TaskNotFoundError
 from models import Task, TaskCreate, TaskStatus, TaskUpdate
 from utils.errors import (
     BadRequestError,
@@ -37,6 +40,7 @@ def create_app(config_class=None) -> Flask:
     - Database initialization
     - Error handlers
     - API routes
+    - Graceful shutdown handling
     
     Args:
         config_class: Optional configuration class. Uses environment-based config if not provided.
@@ -52,20 +56,20 @@ def create_app(config_class=None) -> Flask:
     
     app.config.from_object(config_class)
     
-    # Store config values for easy access
-    app.config["DATABASE_PATH"] = config_class.get_database_path()
-    
     # Initialize database
-    db = Database(str(config_class.get_database_path()))
+    db_path = str(config_class.get_database_path())
     try:
-        db.initialize_db()
-        logger.info(f"Database initialized at: {config_class.get_database_path()}")
+        db_manager = init_db(db_path)
+        logger.info(f"Database initialized at: {db_path}")
     except DatabaseError as e:
         logger.error(f"Failed to initialize database: {e}")
         raise
     
-    # Store database instance in app context
-    app.db = db
+    # Create task repository
+    app.task_repo = TaskRepository(db_manager)
+    
+    # Register shutdown handler
+    atexit.register(close_db)
     
     # Register error handlers
     register_error_handlers(app)
@@ -113,7 +117,7 @@ def register_routes(app: Flask) -> None:
         db_status = "connected"
         try:
             # Test database connectivity by fetching tasks
-            app.db.get_tasks()
+            app.task_repo.get_all()
         except Exception as e:
             db_status = f"error: {str(e)}"
             logger.error(f"Database health check failed: {e}")
@@ -140,7 +144,9 @@ def register_routes(app: Flask) -> None:
         
         if status_param:
             try:
-                status_filter = TaskStatus(status_param)
+                # Validate status
+                TaskStatus(status_param)
+                status_filter = status_param
             except ValueError:
                 valid_statuses = [s.value for s in TaskStatus]
                 raise BadRequestError(
@@ -148,9 +154,8 @@ def register_routes(app: Flask) -> None:
                 )
         
         try:
-            tasks = app.db.get_tasks(status_filter=status_filter)
-            tasks_data = [_task_to_dict(task) for task in tasks]
-            return success_response(tasks_data)
+            tasks = app.task_repo.get_all(status_filter=status_filter)
+            return success_response(tasks)
         except DatabaseError as e:
             logger.error(f"Failed to retrieve tasks: {e}")
             raise InternalServerError("Failed to retrieve tasks")
@@ -167,8 +172,8 @@ def register_routes(app: Flask) -> None:
             JSON response with task details.
         """
         try:
-            task = app.db.get_task_by_id(task_id)
-            return success_response(_task_to_dict(task))
+            task = app.task_repo.get_by_id(task_id)
+            return success_response(task)
         except TaskNotFoundError:
             raise NotFoundError(f"Task with ID '{task_id}' not found")
         except DatabaseError as e:
@@ -217,11 +222,15 @@ def register_routes(app: Flask) -> None:
                         f"Invalid status '{data['status']}'. Valid values: {valid_statuses}"
                     )
             
+            # Create task model and convert to DB format
             task_create = TaskCreate(**data)
-            task = app.db.create_task(task_create)
+            task = Task(**task_create.model_dump())
+            task_dict = task.to_db_dict()
             
-            logger.info(f"Created task: {task.id} - {task.title}")
-            return success_response(_task_to_dict(task), status_code=201)
+            created_task = app.task_repo.create(task_dict)
+            
+            logger.info(f"Created task: {created_task['id']} - {created_task['title']}")
+            return success_response(created_task, status_code=201)
         
         except BadRequestError:
             raise
@@ -257,27 +266,37 @@ def register_routes(app: Flask) -> None:
             raise BadRequestError("Request body is required")
         
         try:
-            # Parse due_date if provided
-            if "due_date" in data and data["due_date"]:
-                data["due_date"] = datetime.fromisoformat(
-                    data["due_date"].replace("Z", "+00:00")
-                )
+            # Build update dict
+            update_data = {}
             
-            # Parse status if provided
-            if "status" in data and data["status"]:
+            if "title" in data:
+                update_data["title"] = data["title"]
+            
+            if "due_date" in data:
+                if data["due_date"]:
+                    update_data["due_date"] = datetime.fromisoformat(
+                        data["due_date"].replace("Z", "+00:00")
+                    ).isoformat()
+                else:
+                    update_data["due_date"] = None
+            
+            if "status" in data:
                 try:
-                    data["status"] = TaskStatus(data["status"])
+                    status = TaskStatus(data["status"])
+                    update_data["status"] = status.value
                 except ValueError:
                     valid_statuses = [s.value for s in TaskStatus]
                     raise BadRequestError(
                         f"Invalid status '{data['status']}'. Valid values: {valid_statuses}"
                     )
             
-            task_update = TaskUpdate(**data)
-            task = app.db.update_task(task_id, task_update)
+            if "comments" in data:
+                update_data["comments"] = data["comments"]
             
-            logger.info(f"Updated task: {task.id}")
-            return success_response(_task_to_dict(task))
+            updated_task = app.task_repo.update(task_id, update_data)
+            
+            logger.info(f"Updated task: {task_id}")
+            return success_response(updated_task)
         
         except BadRequestError:
             raise
@@ -301,7 +320,7 @@ def register_routes(app: Flask) -> None:
             JSON response confirming deletion.
         """
         try:
-            app.db.delete_task(task_id)
+            app.task_repo.delete(task_id, soft_delete=True)
             logger.info(f"Deleted task: {task_id}")
             return success_response({"message": f"Task '{task_id}' deleted successfully"})
         except TaskNotFoundError:
@@ -309,27 +328,6 @@ def register_routes(app: Flask) -> None:
         except DatabaseError as e:
             logger.error(f"Failed to delete task {task_id}: {e}")
             raise InternalServerError("Failed to delete task")
-
-
-def _task_to_dict(task: Task) -> dict:
-    """
-    Convert a Task model to a dictionary for JSON serialization.
-    
-    Args:
-        task: Task model instance.
-    
-    Returns:
-        dict: Task data with serializable datetime fields.
-    """
-    return {
-        "id": task.id,
-        "title": task.title,
-        "due_date": task.due_date.isoformat() if task.due_date else None,
-        "status": task.status.value,
-        "comments": task.comments,
-        "created_timestamp": task.created_timestamp.isoformat(),
-        "updated_timestamp": task.updated_timestamp.isoformat(),
-    }
 
 
 # Create application instance

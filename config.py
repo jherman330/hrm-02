@@ -33,7 +33,7 @@ class Config:
         """
         db_path = Path(cls.DATABASE_PATH)
         if not db_path.is_absolute():
-            # Make relative paths relative to the src directory
+            # Make relative paths relative to the project root
             db_path = Path(__file__).parent / db_path
         return db_path
     
