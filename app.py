@@ -9,6 +9,7 @@ import sys
 from datetime import datetime
 
 from flask import Flask, request
+from flask_cors import CORS
 
 from config import Config, get_config
 from database import init_db, close_db, TaskRepository
@@ -49,6 +50,9 @@ def create_app(config_class=None) -> Flask:
         Flask: Configured Flask application instance.
     """
     app = Flask(__name__)
+    
+    # Enable CORS for local development
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
     
     # Load configuration
     if config_class is None:
@@ -328,6 +332,191 @@ def register_routes(app: Flask) -> None:
         except DatabaseError as e:
             logger.error(f"Failed to delete task {task_id}: {e}")
             raise InternalServerError("Failed to delete task")
+    
+    # =========================================================================
+    # /api/tasks endpoints (WO-11) - Default filtering excludes Closed/Deleted
+    # =========================================================================
+    
+    @app.route("/api/tasks", methods=["GET"])
+    def get_tasks_api():
+        """
+        Retrieve tasks with default filtering (excludes Closed/Deleted).
+        
+        Query Parameters:
+            status: Optional filter by specific status. If provided, returns
+                   only tasks with that status. If not provided, excludes
+                   Closed and Deleted tasks.
+        
+        Returns:
+            JSON response with list of tasks sorted by due_date ascending.
+        """
+        status_param = request.args.get("status")
+        
+        if status_param:
+            try:
+                # Validate status
+                TaskStatus(status_param)
+            except ValueError:
+                valid_statuses = [s.value for s in TaskStatus]
+                raise BadRequestError(
+                    f"Invalid status '{status_param}'. Valid values: {valid_statuses}"
+                )
+        
+        try:
+            tasks = app.task_repo.get_all(
+                status_filter=status_param,
+                exclude_closed_deleted=(status_param is None),
+                sort_by_due_date=True
+            )
+            return success_response(tasks)
+        except DatabaseError as e:
+            logger.error(f"Failed to retrieve tasks: {e}")
+            raise InternalServerError("Failed to retrieve tasks")
+    
+    @app.route("/api/tasks/<task_id>", methods=["GET"])
+    def get_task_api(task_id: str):
+        """
+        Retrieve a single task by ID.
+        
+        Args:
+            task_id: Unique task identifier.
+        
+        Returns:
+            JSON response with task details.
+        """
+        try:
+            task = app.task_repo.get_by_id(task_id)
+            return success_response(task)
+        except TaskNotFoundError:
+            raise NotFoundError(f"Task with ID '{task_id}' not found")
+        except DatabaseError as e:
+            logger.error(f"Failed to retrieve task {task_id}: {e}")
+            raise InternalServerError("Failed to retrieve task")
+    
+    @app.route("/api/tasks", methods=["POST"])
+    def create_task_api():
+        """
+        Create a new task.
+        
+        Request Body (JSON):
+            title: Required task title
+            due_date: Optional due date (ISO 8601 format)
+            comments: Optional comments
+        
+        Note: Status is automatically set to 'Open', ID and timestamps
+              are auto-generated.
+        
+        Returns:
+            JSON response with created task details.
+        """
+        if not request.is_json:
+            raise BadRequestError("Request must be JSON")
+        
+        data = request.get_json()
+        
+        if not data:
+            raise BadRequestError("Request body is required")
+        
+        if "title" not in data or not data["title"]:
+            raise BadRequestError("Task title is required")
+        
+        try:
+            # Parse due_date if provided
+            if "due_date" in data and data["due_date"]:
+                data["due_date"] = datetime.fromisoformat(
+                    data["due_date"].replace("Z", "+00:00")
+                )
+            
+            # Force status to Open for new tasks
+            data["status"] = TaskStatus.OPEN
+            
+            # Create task model and convert to DB format
+            task_create = TaskCreate(**data)
+            task = Task(**task_create.model_dump())
+            task_dict = task.to_db_dict()
+            
+            created_task = app.task_repo.create(task_dict)
+            
+            logger.info(f"Created task: {created_task['id']} - {created_task['title']}")
+            return success_response(created_task, status_code=201)
+        
+        except BadRequestError:
+            raise
+        except ValueError as e:
+            raise BadRequestError(f"Invalid data: {str(e)}")
+        except DatabaseError as e:
+            logger.error(f"Failed to create task: {e}")
+            raise InternalServerError("Failed to create task")
+    
+    @app.route("/api/tasks/<task_id>", methods=["PUT"])
+    def update_task_api(task_id: str):
+        """
+        Update an existing task.
+        
+        Args:
+            task_id: Unique task identifier.
+        
+        Request Body (JSON):
+            title: Optional new title
+            due_date: Optional new due date
+            status: Optional new status
+            comments: Optional new comments
+        
+        Returns:
+            JSON response with updated task details.
+        """
+        if not request.is_json:
+            raise BadRequestError("Request must be JSON")
+        
+        data = request.get_json()
+        
+        if not data:
+            raise BadRequestError("Request body is required")
+        
+        try:
+            # Build update dict
+            update_data = {}
+            
+            if "title" in data:
+                if not data["title"]:
+                    raise BadRequestError("Title cannot be empty")
+                update_data["title"] = data["title"]
+            
+            if "due_date" in data:
+                if data["due_date"]:
+                    update_data["due_date"] = datetime.fromisoformat(
+                        data["due_date"].replace("Z", "+00:00")
+                    ).isoformat()
+                else:
+                    update_data["due_date"] = None
+            
+            if "status" in data:
+                try:
+                    status = TaskStatus(data["status"])
+                    update_data["status"] = status.value
+                except ValueError:
+                    valid_statuses = [s.value for s in TaskStatus]
+                    raise BadRequestError(
+                        f"Invalid status '{data['status']}'. Valid values: {valid_statuses}"
+                    )
+            
+            if "comments" in data:
+                update_data["comments"] = data["comments"]
+            
+            updated_task = app.task_repo.update(task_id, update_data)
+            
+            logger.info(f"Updated task: {task_id}")
+            return success_response(updated_task)
+        
+        except BadRequestError:
+            raise
+        except TaskNotFoundError:
+            raise NotFoundError(f"Task with ID '{task_id}' not found")
+        except ValueError as e:
+            raise BadRequestError(f"Invalid data: {str(e)}")
+        except DatabaseError as e:
+            logger.error(f"Failed to update task {task_id}: {e}")
+            raise InternalServerError("Failed to update task")
 
 
 # Create application instance

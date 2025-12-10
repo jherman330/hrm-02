@@ -114,12 +114,19 @@ class TaskRepository:
             logger.error(f"Failed to retrieve task {task_id}: {e}")
             raise DatabaseError(f"Failed to retrieve task: {e}")
     
-    def get_all(self, status_filter: Optional[str] = None) -> List[dict]:
+    def get_all(
+        self, 
+        status_filter: Optional[str] = None,
+        exclude_closed_deleted: bool = False,
+        sort_by_due_date: bool = False
+    ) -> List[dict]:
         """
         Retrieve all tasks with optional status filtering.
         
         Args:
             status_filter: Optional status to filter tasks by.
+            exclude_closed_deleted: If True, excludes Closed and Deleted tasks.
+            sort_by_due_date: If True, sorts by due_date ASC (nulls last).
         
         Returns:
             List[dict]: List of task dictionaries.
@@ -127,12 +134,28 @@ class TaskRepository:
         Raises:
             DatabaseError: If retrieval fails.
         """
+        # Build WHERE clause
+        where_clauses = []
+        params = []
+        
         if status_filter:
-            select_sql = "SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC"
-            params = (status_filter,)
+            where_clauses.append("status = ?")
+            params.append(status_filter)
+        elif exclude_closed_deleted:
+            where_clauses.append("status NOT IN ('Closed', 'Deleted')")
+        
+        # Build ORDER BY clause
+        if sort_by_due_date:
+            # Sort by due_date ASC, with NULLs at the end
+            order_by = "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC"
         else:
-            select_sql = "SELECT * FROM tasks ORDER BY created_at DESC"
-            params = ()
+            order_by = "ORDER BY created_at DESC"
+        
+        # Build full query
+        if where_clauses:
+            select_sql = f"SELECT * FROM tasks WHERE {' AND '.join(where_clauses)} {order_by}"
+        else:
+            select_sql = f"SELECT * FROM tasks {order_by}"
         
         try:
             with self.db.get_connection() as conn:
