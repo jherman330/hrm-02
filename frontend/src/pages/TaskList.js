@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTaskContext } from '../context/TaskContext';
 import { useToast } from '../components/Toast';
+import TaskItem from '../components/TaskItem';
 import taskService, { ApiError } from '../services/taskService';
 
 /**
@@ -9,7 +10,7 @@ import taskService, { ApiError } from '../services/taskService';
  * Displays the list of tasks with API integration and error handling.
  */
 function TaskList() {
-  const { tasks, loading, setTasks, setLoading, setError } = useTaskContext();
+  const { tasks, loading, setTasks, updateTask, deleteTask, setLoading, setError } = useTaskContext();
   const toast = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -48,13 +49,25 @@ function TaskList() {
     }
   };
 
+  // Handle task update
+  const handleUpdate = async (taskId, updates) => {
+    try {
+      const updatedTask = await taskService.updateTask(taskId, updates);
+      updateTask(updatedTask);
+      toast.success('Task updated');
+      return updatedTask;
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : 'Failed to update task';
+      toast.error(message);
+      throw error;
+    }
+  };
+
   // Handle task deletion
-  const handleDelete = async (taskId, taskTitle) => {
-    if (!window.confirm(`Delete "${taskTitle}"?`)) return;
-    
+  const handleDelete = async (taskId) => {
     try {
       await taskService.deleteTask(taskId);
-      setTasks(tasks.filter(t => t.id !== taskId));
+      deleteTask(taskId);
       toast.success('Task deleted');
     } catch (error) {
       toast.error(error.message || 'Failed to delete task');
@@ -92,50 +105,17 @@ function TaskList() {
       ) : (
         <div style={styles.taskList}>
           {tasks.map(task => (
-            <div key={task.id} style={styles.taskCard}>
-              <div style={styles.taskHeader}>
-                <h3 style={styles.taskTitle}>{task.title}</h3>
-                <div style={styles.taskActions}>
-                  <span style={{
-                    ...styles.status,
-                    backgroundColor: getStatusColor(task.status)
-                  }}>
-                    {task.status}
-                  </span>
-                  <button
-                    onClick={() => handleDelete(task.id, task.title)}
-                    style={styles.deleteButton}
-                    title="Delete task"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-              {task.due_date && (
-                <p style={styles.dueDate}>
-                  📅 Due: {new Date(task.due_date).toLocaleDateString()}
-                </p>
-              )}
-              {task.comments && (
-                <p style={styles.comments}>{task.comments}</p>
-              )}
-            </div>
+            <TaskItem
+              key={task.id}
+              task={task}
+              onUpdate={handleUpdate}
+              onDelete={handleDelete}
+            />
           ))}
         </div>
       )}
     </div>
   );
-}
-
-function getStatusColor(status) {
-  const colors = {
-    'Open': '#3498db',
-    'In Progress': '#f39c12',
-    'Blocked': '#e74c3c',
-    'Closed': '#27ae60',
-    'Deleted': '#95a5a6',
-  };
-  return colors[status] || '#7f8c8d';
 }
 
 const styles = {
@@ -210,56 +190,6 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
-  },
-  taskCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: '12px',
-    padding: '20px',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
-    transition: 'transform 0.2s, box-shadow 0.2s',
-  },
-  taskHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: '8px',
-  },
-  taskTitle: {
-    fontSize: '1.1rem',
-    fontWeight: '500',
-    color: '#fff',
-    margin: 0,
-  },
-  taskActions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-  },
-  status: {
-    padding: '4px 12px',
-    borderRadius: '12px',
-    fontSize: '0.75rem',
-    fontWeight: '500',
-    color: '#fff',
-  },
-  deleteButton: {
-    background: 'transparent',
-    border: 'none',
-    color: '#a0a0a0',
-    fontSize: '1.5rem',
-    cursor: 'pointer',
-    padding: '0 4px',
-    lineHeight: 1,
-  },
-  dueDate: {
-    fontSize: '0.875rem',
-    color: '#a0a0a0',
-    margin: '8px 0',
-  },
-  comments: {
-    fontSize: '0.875rem',
-    color: '#c0c0c0',
-    margin: 0,
   },
 };
 
