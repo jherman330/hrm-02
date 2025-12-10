@@ -346,11 +346,15 @@ def register_routes(app: Flask) -> None:
             status: Optional filter by specific status. If provided, returns
                    only tasks with that status. If not provided, excludes
                    Closed and Deleted tasks.
+            sort_by: Optional sort field (due_date, created_at). Default: due_date
         
         Returns:
-            JSON response with list of tasks sorted by due_date ascending.
+            JSON response with list of tasks sorted by specified field.
+            When sorting by due_date, tasks with same due_date are sorted by created_at.
+            Tasks without due dates appear at the end.
         """
         status_param = request.args.get("status")
+        sort_by_param = request.args.get("sort_by", "due_date")
         
         if status_param:
             try:
@@ -362,11 +366,18 @@ def register_routes(app: Flask) -> None:
                     f"Invalid status '{status_param}'. Valid values: {valid_statuses}"
                 )
         
+        # Validate sort_by parameter
+        valid_sort_fields = ["due_date", "created_at"]
+        if sort_by_param not in valid_sort_fields:
+            raise BadRequestError(
+                f"Invalid sort_by '{sort_by_param}'. Valid values: {valid_sort_fields}"
+            )
+        
         try:
             tasks = app.task_repo.get_all(
                 status_filter=status_param,
                 exclude_closed_deleted=(status_param is None),
-                sort_by_due_date=True
+                sort_by_due_date=(sort_by_param == "due_date")
             )
             return success_response(tasks)
         except DatabaseError as e:

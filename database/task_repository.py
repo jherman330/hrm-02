@@ -146,8 +146,8 @@ class TaskRepository:
         
         # Build ORDER BY clause
         if sort_by_due_date:
-            # Sort by due_date ASC, with NULLs at the end
-            order_by = "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC"
+            # Sort by due_date ASC, with NULLs at the end, then by created_at ASC for same due_dates
+            order_by = "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC, created_at ASC"
         else:
             order_by = "ORDER BY created_at DESC"
         
