@@ -256,6 +256,94 @@ class TaskRepository:
             logger.error(f"Failed to delete task {task_id}: {e}")
             raise DatabaseError(f"Failed to delete task: {e}")
     
+    def query(
+        self,
+        status: Optional[str] = None,
+        due_date_before: Optional[str] = None,
+        due_date_after: Optional[str] = None,
+        has_due_date: Optional[bool] = None,
+        exclude_closed_deleted: bool = False,
+        sort_by: str = "created_at",
+        sort_order: str = "desc"
+    ) -> List[dict]:
+        """
+        Advanced query for tasks with multiple filter and sort options.
+        
+        Args:
+            status: Filter by exact status value.
+            due_date_before: Filter tasks with due_date before this date (ISO format).
+            due_date_after: Filter tasks with due_date after this date (ISO format).
+            has_due_date: If True, only tasks with due_date. If False, only tasks without.
+            exclude_closed_deleted: If True, excludes Closed and Deleted tasks.
+            sort_by: Field to sort by (created_at, due_date, updated_at, title).
+            sort_order: Sort direction (asc or desc).
+        
+        Returns:
+            List[dict]: List of task dictionaries matching criteria.
+        
+        Raises:
+            DatabaseError: If query fails.
+            ValueError: If invalid sort_by or sort_order provided.
+        """
+        # Validate sort parameters
+        valid_sort_fields = ["created_at", "due_date", "updated_at", "title", "status"]
+        valid_sort_orders = ["asc", "desc"]
+        
+        if sort_by not in valid_sort_fields:
+            raise ValueError(f"Invalid sort_by '{sort_by}'. Valid values: {valid_sort_fields}")
+        if sort_order.lower() not in valid_sort_orders:
+            raise ValueError(f"Invalid sort_order '{sort_order}'. Valid values: {valid_sort_orders}")
+        
+        # Build WHERE clauses
+        where_clauses = []
+        params = []
+        
+        if status:
+            where_clauses.append("status = ?")
+            params.append(status)
+        elif exclude_closed_deleted:
+            where_clauses.append("status NOT IN ('Closed', 'Deleted')")
+        
+        if due_date_before:
+            where_clauses.append("due_date < ?")
+            params.append(due_date_before)
+        
+        if due_date_after:
+            where_clauses.append("due_date > ?")
+            params.append(due_date_after)
+        
+        if has_due_date is True:
+            where_clauses.append("due_date IS NOT NULL")
+        elif has_due_date is False:
+            where_clauses.append("due_date IS NULL")
+        
+        # Build ORDER BY clause
+        sort_order_sql = sort_order.upper()
+        if sort_by == "due_date":
+            # Handle NULLs for due_date sorting
+            if sort_order_sql == "ASC":
+                order_by = "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC"
+            else:
+                order_by = "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date DESC"
+        else:
+            order_by = f"ORDER BY {sort_by} {sort_order_sql}"
+        
+        # Build full query
+        if where_clauses:
+            select_sql = f"SELECT * FROM tasks WHERE {' AND '.join(where_clauses)} {order_by}"
+        else:
+            select_sql = f"SELECT * FROM tasks {order_by}"
+        
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(select_sql, params)
+                rows = cursor.fetchall()
+                return [self._row_to_dict(row) for row in rows]
+        except sqlite3.Error as e:
+            logger.error(f"Failed to query tasks: {e}")
+            raise DatabaseError(f"Failed to query tasks: {e}")
+    
     def _row_to_dict(self, row: sqlite3.Row) -> dict:
         """
         Convert a database row to a dictionary.

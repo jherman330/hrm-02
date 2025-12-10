@@ -517,6 +517,104 @@ def register_routes(app: Flask) -> None:
         except DatabaseError as e:
             logger.error(f"Failed to update task {task_id}: {e}")
             raise InternalServerError("Failed to update task")
+    
+    # =========================================================================
+    # /api/tasks/filter endpoint (WO-17) - Advanced filtering and sorting
+    # =========================================================================
+    
+    @app.route("/api/tasks/filter", methods=["GET"])
+    def filter_tasks():
+        """
+        Advanced task filtering and sorting endpoint.
+        
+        Query Parameters:
+            status: Filter by exact status (Open, In Progress, Blocked, Closed, Deleted)
+            due_date_before: Filter tasks due before this date (ISO 8601 format)
+            due_date_after: Filter tasks due after this date (ISO 8601 format)
+            has_due_date: Filter by whether task has a due date (true/false)
+            sort_by: Field to sort by (created_at, due_date, updated_at, title, status)
+            sort_order: Sort direction (asc, desc) - default: desc
+        
+        Returns:
+            JSON response with filtered and sorted task list.
+            Returns empty array if no tasks match criteria.
+        """
+        # Get query parameters
+        status = request.args.get("status")
+        due_date_before = request.args.get("due_date_before")
+        due_date_after = request.args.get("due_date_after")
+        has_due_date_param = request.args.get("has_due_date")
+        sort_by = request.args.get("sort_by", "created_at")
+        sort_order = request.args.get("sort_order", "desc")
+        
+        # Validate status if provided
+        if status:
+            try:
+                TaskStatus(status)
+            except ValueError:
+                valid_statuses = [s.value for s in TaskStatus]
+                raise BadRequestError(
+                    f"Invalid status '{status}'. Valid values: {valid_statuses}"
+                )
+        
+        # Validate and parse has_due_date
+        has_due_date = None
+        if has_due_date_param is not None:
+            if has_due_date_param.lower() == "true":
+                has_due_date = True
+            elif has_due_date_param.lower() == "false":
+                has_due_date = False
+            else:
+                raise BadRequestError(
+                    f"Invalid has_due_date '{has_due_date_param}'. Valid values: true, false"
+                )
+        
+        # Validate date formats
+        if due_date_before:
+            try:
+                datetime.fromisoformat(due_date_before.replace("Z", "+00:00"))
+            except ValueError:
+                raise BadRequestError(
+                    f"Invalid due_date_before format '{due_date_before}'. Use ISO 8601 format."
+                )
+        
+        if due_date_after:
+            try:
+                datetime.fromisoformat(due_date_after.replace("Z", "+00:00"))
+            except ValueError:
+                raise BadRequestError(
+                    f"Invalid due_date_after format '{due_date_after}'. Use ISO 8601 format."
+                )
+        
+        # Validate sort parameters
+        valid_sort_fields = ["created_at", "due_date", "updated_at", "title", "status"]
+        valid_sort_orders = ["asc", "desc"]
+        
+        if sort_by not in valid_sort_fields:
+            raise BadRequestError(
+                f"Invalid sort_by '{sort_by}'. Valid values: {valid_sort_fields}"
+            )
+        
+        if sort_order.lower() not in valid_sort_orders:
+            raise BadRequestError(
+                f"Invalid sort_order '{sort_order}'. Valid values: {valid_sort_orders}"
+            )
+        
+        try:
+            tasks = app.task_repo.query(
+                status=status,
+                due_date_before=due_date_before,
+                due_date_after=due_date_after,
+                has_due_date=has_due_date,
+                sort_by=sort_by,
+                sort_order=sort_order
+            )
+            return success_response(tasks)
+        except ValueError as e:
+            raise BadRequestError(str(e))
+        except DatabaseError as e:
+            logger.error(f"Failed to filter tasks: {e}")
+            raise InternalServerError("Failed to filter tasks")
 
 
 # Create application instance
