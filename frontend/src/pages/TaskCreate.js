@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTaskContext } from '../context/TaskContext';
+import { useToast } from '../components/Toast';
+import taskService, { ApiError } from '../services/taskService';
 
 /**
  * TaskCreate page component.
- * Provides a form to create new tasks.
+ * Provides a form to create new tasks with API integration.
  */
 function TaskCreate() {
   const navigate = useNavigate();
-  const { addTask, setError } = useTaskContext();
+  const { addTask } = useTaskContext();
+  const toast = useToast();
   
   const [formData, setFormData] = useState({
     title: '',
@@ -16,6 +19,7 @@ function TaskCreate() {
     comments: '',
   });
   const [submitting, setSubmitting] = useState(false);
+  const [errors, setErrors] = useState({});
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -23,34 +27,47 @@ function TaskCreate() {
       ...prev,
       [name]: value,
     }));
+    // Clear error when user starts typing
+    if (errors[name]) {
+      setErrors(prev => ({ ...prev, [name]: null }));
+    }
+  };
+
+  const validate = () => {
+    const newErrors = {};
+    if (!formData.title.trim()) {
+      newErrors.title = 'Title is required';
+    }
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!formData.title.trim()) {
-      setError('Title is required');
+    if (!validate()) {
+      toast.warning('Please fix the errors');
       return;
     }
 
     setSubmitting(true);
     
     try {
-      // TODO: Replace with actual API call in service layer
-      const newTask = {
-        id: Date.now().toString(), // Temporary ID
+      const taskData = {
         title: formData.title.trim(),
         due_date: formData.due_date || null,
         comments: formData.comments.trim() || null,
-        status: 'Open',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
       };
       
+      const newTask = await taskService.createTask(taskData);
       addTask(newTask);
+      toast.success('Task created successfully');
       navigate('/tasks');
     } catch (error) {
-      setError('Failed to create task');
+      const message = error instanceof ApiError 
+        ? error.message 
+        : 'Failed to create task';
+      toast.error(message);
     } finally {
       setSubmitting(false);
     }
@@ -77,10 +94,16 @@ function TaskCreate() {
             value={formData.title}
             onChange={handleChange}
             placeholder="Enter task title"
-            style={styles.input}
+            style={{
+              ...styles.input,
+              borderColor: errors.title ? '#e74c3c' : 'rgba(255, 255, 255, 0.2)',
+            }}
             maxLength={255}
-            required
+            disabled={submitting}
           />
+          {errors.title && (
+            <span style={styles.errorText}>{errors.title}</span>
+          )}
         </div>
 
         <div style={styles.formGroup}>
@@ -94,6 +117,7 @@ function TaskCreate() {
             value={formData.due_date}
             onChange={handleChange}
             style={styles.input}
+            disabled={submitting}
           />
         </div>
 
@@ -110,6 +134,7 @@ function TaskCreate() {
             style={styles.textarea}
             rows={4}
             maxLength={1000}
+            disabled={submitting}
           />
         </div>
 
@@ -119,10 +144,20 @@ function TaskCreate() {
           </Link>
           <button
             type="submit"
-            style={styles.submitButton}
+            style={{
+              ...styles.submitButton,
+              opacity: submitting ? 0.7 : 1,
+            }}
             disabled={submitting}
           >
-            {submitting ? 'Creating...' : 'Create Task'}
+            {submitting ? (
+              <>
+                <span style={styles.buttonSpinner}></span>
+                Creating...
+              </>
+            ) : (
+              'Create Task'
+            )}
           </button>
         </div>
       </form>
@@ -179,6 +214,7 @@ const styles = {
     color: '#fff',
     fontSize: '1rem',
     outline: 'none',
+    boxSizing: 'border-box',
   },
   textarea: {
     width: '100%',
@@ -191,6 +227,13 @@ const styles = {
     outline: 'none',
     resize: 'vertical',
     fontFamily: 'inherit',
+    boxSizing: 'border-box',
+  },
+  errorText: {
+    color: '#e74c3c',
+    fontSize: '0.8rem',
+    marginTop: '4px',
+    display: 'block',
   },
   buttonGroup: {
     display: 'flex',
@@ -215,8 +258,18 @@ const styles = {
     color: '#fff',
     fontWeight: '500',
     cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  buttonSpinner: {
+    width: '16px',
+    height: '16px',
+    border: '2px solid rgba(255,255,255,0.3)',
+    borderTopColor: '#fff',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
   },
 };
 
 export default TaskCreate;
-

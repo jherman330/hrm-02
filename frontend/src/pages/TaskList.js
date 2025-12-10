@@ -1,31 +1,89 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTaskContext } from '../context/TaskContext';
+import { useToast } from '../components/Toast';
+import taskService, { ApiError } from '../services/taskService';
 
 /**
  * TaskList page component.
- * Displays the list of tasks and provides navigation to create new tasks.
+ * Displays the list of tasks with API integration and error handling.
  */
 function TaskList() {
-  const { tasks, loading, error } = useTaskContext();
+  const { tasks, loading, setTasks, setLoading, setError } = useTaskContext();
+  const toast = useToast();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Fetch tasks on mount
+  useEffect(() => {
+    async function fetchTasks() {
+      setLoading(true);
+      try {
+        const data = await taskService.getTasks();
+        setTasks(data);
+      } catch (error) {
+        const message = error instanceof ApiError 
+          ? error.message 
+          : 'Failed to load tasks';
+        setError(message);
+        toast.error(message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    fetchTasks();
+  }, [setTasks, setLoading, setError, toast]);
+
+  // Handle refresh
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const data = await taskService.refreshCache();
+      setTasks(data);
+      toast.success('Tasks refreshed');
+    } catch (error) {
+      toast.error('Failed to refresh tasks');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Handle task deletion
+  const handleDelete = async (taskId, taskTitle) => {
+    if (!window.confirm(`Delete "${taskTitle}"?`)) return;
+    
+    try {
+      await taskService.deleteTask(taskId);
+      setTasks(tasks.filter(t => t.id !== taskId));
+      toast.success('Task deleted');
+    } catch (error) {
+      toast.error(error.message || 'Failed to delete task');
+    }
+  };
 
   return (
     <div style={styles.container}>
       <header style={styles.header}>
         <h1 style={styles.title}>Task Manager</h1>
-        <Link to="/tasks/new" style={styles.createButton}>
-          + New Task
-        </Link>
+        <div style={styles.actions}>
+          <button 
+            onClick={handleRefresh} 
+            style={styles.refreshButton}
+            disabled={isRefreshing}
+          >
+            {isRefreshing ? '↻' : '⟳'} Refresh
+          </button>
+          <Link to="/tasks/new" style={styles.createButton}>
+            + New Task
+          </Link>
+        </div>
       </header>
 
-      {error && (
-        <div style={styles.error}>
-          {error}
+      {loading && !tasks.length ? (
+        <div style={styles.loading}>
+          <div style={styles.spinner}></div>
+          Loading tasks...
         </div>
-      )}
-
-      {loading ? (
-        <div style={styles.loading}>Loading tasks...</div>
       ) : tasks.length === 0 ? (
         <div style={styles.empty}>
           <p>No tasks yet.</p>
@@ -37,16 +95,25 @@ function TaskList() {
             <div key={task.id} style={styles.taskCard}>
               <div style={styles.taskHeader}>
                 <h3 style={styles.taskTitle}>{task.title}</h3>
-                <span style={{
-                  ...styles.status,
-                  backgroundColor: getStatusColor(task.status)
-                }}>
-                  {task.status}
-                </span>
+                <div style={styles.taskActions}>
+                  <span style={{
+                    ...styles.status,
+                    backgroundColor: getStatusColor(task.status)
+                  }}>
+                    {task.status}
+                  </span>
+                  <button
+                    onClick={() => handleDelete(task.id, task.title)}
+                    style={styles.deleteButton}
+                    title="Delete task"
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
               {task.due_date && (
                 <p style={styles.dueDate}>
-                  Due: {new Date(task.due_date).toLocaleDateString()}
+                  📅 Due: {new Date(task.due_date).toLocaleDateString()}
                 </p>
               )}
               {task.comments && (
@@ -82,11 +149,27 @@ const styles = {
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: '32px',
+    flexWrap: 'wrap',
+    gap: '16px',
   },
   title: {
     fontSize: '2rem',
     fontWeight: '600',
     color: '#fff',
+    margin: 0,
+  },
+  actions: {
+    display: 'flex',
+    gap: '12px',
+  },
+  refreshButton: {
+    backgroundColor: 'transparent',
+    border: '1px solid rgba(255,255,255,0.3)',
+    color: '#a0a0a0',
+    padding: '12px 20px',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '0.9rem',
   },
   createButton: {
     backgroundColor: '#e94560',
@@ -97,18 +180,22 @@ const styles = {
     fontWeight: '500',
     transition: 'background-color 0.2s',
   },
-  error: {
-    backgroundColor: 'rgba(231, 76, 60, 0.2)',
-    border: '1px solid #e74c3c',
-    color: '#e74c3c',
-    padding: '12px',
-    borderRadius: '8px',
-    marginBottom: '16px',
-  },
   loading: {
     textAlign: 'center',
     padding: '48px',
     color: '#a0a0a0',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '16px',
+  },
+  spinner: {
+    width: '32px',
+    height: '32px',
+    border: '3px solid rgba(255,255,255,0.1)',
+    borderTopColor: '#e94560',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
   },
   empty: {
     textAlign: 'center',
@@ -129,6 +216,7 @@ const styles = {
     borderRadius: '12px',
     padding: '20px',
     border: '1px solid rgba(255, 255, 255, 0.1)',
+    transition: 'transform 0.2s, box-shadow 0.2s',
   },
   taskHeader: {
     display: 'flex',
@@ -142,12 +230,26 @@ const styles = {
     color: '#fff',
     margin: 0,
   },
+  taskActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
   status: {
     padding: '4px 12px',
     borderRadius: '12px',
     fontSize: '0.75rem',
     fontWeight: '500',
     color: '#fff',
+  },
+  deleteButton: {
+    background: 'transparent',
+    border: 'none',
+    color: '#a0a0a0',
+    fontSize: '1.5rem',
+    cursor: 'pointer',
+    padding: '0 4px',
+    lineHeight: 1,
   },
   dueDate: {
     fontSize: '0.875rem',
@@ -161,5 +263,15 @@ const styles = {
   },
 };
 
-export default TaskList;
+// Add spinner animation
+if (typeof document !== 'undefined') {
+  const styleSheet = document.createElement('style');
+  styleSheet.textContent = `
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  `;
+  document.head.appendChild(styleSheet);
+}
 
+export default TaskList;
