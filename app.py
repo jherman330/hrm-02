@@ -207,7 +207,7 @@ def register_routes(app: Flask) -> None:
             raise BadRequestError("Request body is required")
         
         if "title" not in data or not data["title"]:
-            raise BadRequestError("Task title is required")
+            raise BadRequestError("Title is required")
         
         try:
             # Parse due_date if provided
@@ -429,7 +429,7 @@ def register_routes(app: Flask) -> None:
             raise BadRequestError("Request body is required")
         
         if "title" not in data or not data["title"]:
-            raise BadRequestError("Task title is required")
+            raise BadRequestError("Title is required")
         
         try:
             # Parse due_date if provided
@@ -694,7 +694,7 @@ def register_routes(app: Flask) -> None:
             raise BadRequestError("Request body is required")
         
         if "title" not in data or not data["title"]:
-            raise BadRequestError("Task title is required")
+            raise BadRequestError("Title is required")
         
         try:
             # Parse due_date if provided
