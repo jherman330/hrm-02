@@ -506,10 +506,7 @@ def register_routes(app: Flask) -> None:
                     status = TaskStatus(data["status"])
                     update_data["status"] = status.value
                 except ValueError:
-                    valid_statuses = [s.value for s in TaskStatus]
-                    raise BadRequestError(
-                        f"Invalid status '{data['status']}'. Valid values: {valid_statuses}"
-                    )
+                    raise BadRequestError("Invalid status value")
             
             if "comments" in data:
                 update_data["comments"] = data["comments"]
@@ -522,7 +519,7 @@ def register_routes(app: Flask) -> None:
         except BadRequestError:
             raise
         except TaskNotFoundError:
-            raise NotFoundError(f"Task with ID '{task_id}' not found")
+            raise NotFoundError("Task not found")
         except ValueError as e:
             raise BadRequestError(f"Invalid data: {str(e)}")
         except DatabaseError as e:
